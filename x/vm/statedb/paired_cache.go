@@ -31,28 +31,15 @@ func pairedFactory(ctx sdk.Context) PairedCacheFactory {
 // CacheContext pairs an explicitly owned nested SDK cache, including the cache
 // surrounding EVM hooks. The returned scope must be aborted on every exit.
 func CacheContext(ctx sdk.Context) (sdk.Context, func(), PairedCache, error) {
-	child, write := ctx.CacheContext()
-	factory := pairedFactory(ctx)
-	if factory == nil {
-		return child, write, nil, nil
+	child, write, owner, err := sdk.CacheContextWithScope(ctx)
+	if err != nil || owner == nil {
+		return child, write, nil, err
 	}
-	child, scope, err := factory(ctx, child)
-	if err != nil {
-		if scope != nil {
-			AbortCache(scope)
-		}
-		return child, nil, nil, err
+	paired, ok := owner.(PairedCache)
+	if !ok {
+		panic(pairedCachePanic{Cause: "SDK cache owner lacks EVM savepoints"})
 	}
-	if scope == nil {
-		panic(pairedCachePanic{Cause: "paired cache factory returned no scope"})
-	}
-	return child, func() {
-		if err := scope.PrepareAdopt(); err != nil {
-			panic(pairedCachePanic{Cause: err})
-		}
-		completeCache(write)
-		completeCache(scope.Adopt)
-	}, scope, nil
+	return child, write, paired, nil
 }
 
 type pairedCachePanic struct{ Cause any }
@@ -62,6 +49,9 @@ func (pairedCachePanic) FatalExecution() {}
 func completeCache(action func()) {
 	defer func() {
 		if cause := recover(); cause != nil {
+			if limit, ok := cause.(interface{ ProtocolLimit() bool }); ok && limit.ProtocolLimit() {
+				panic(cause)
+			}
 			panic(pairedCachePanic{Cause: cause})
 		}
 	}()
