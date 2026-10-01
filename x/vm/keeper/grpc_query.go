@@ -264,6 +264,7 @@ func (k Keeper) EthCall(c context.Context, req *types.EthCallRequest) (*types.Ms
 
 	// pass false to not commit StateDB
 	stateDB := statedb.New(ctx, &k, txConfig)
+	defer stateDB.Abort()
 	res, err := k.ApplyMessageWithConfig(ctx, stateDB, *msg, nil, false, false, cfg, txConfig, false, overrides)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
@@ -405,6 +406,7 @@ func (k Keeper) EstimateGasInternal(c context.Context, req *types.EthCallRequest
 		}
 		// pass false to not commit StateDB
 		stateDB := statedb.New(tmpCtx, &k, txConfig)
+		defer stateDB.Abort()
 		rsp, err = k.ApplyMessageWithConfig(tmpCtx, stateDB, *msg, nil, false, false, cfg, txConfig, false, nil)
 		if err != nil {
 			if errors.Is(err, core.ErrIntrinsicGas) || errors.Is(err, core.ErrFloorDataGas) {
@@ -558,6 +560,7 @@ func (k Keeper) TraceTx(c context.Context, req *types.QueryTraceTxRequest) (*typ
 		// we ignore the error here. this endpoint, ideally, is called internally from the ETH backend, which will call this query
 		// using all previous txs in the trace transaction's block. some of those _could_ be invalid transactions.
 		stateDB := statedb.New(ctx, &k, txConfig)
+		defer stateDB.Abort()
 		rsp, _ := k.ApplyMessageWithConfig(ctx, stateDB, *msg, nil, true, false, cfg, txConfig, false, nil)
 		if rsp != nil {
 			ctx.GasMeter().ConsumeGas(rsp.GasUsed, "evm predecessor tx")
@@ -837,6 +840,7 @@ func (k *Keeper) traceTxWithMsg(
 	// Build EVM execution context
 	ctx = buildTraceCtx(ctx, msg.GasLimit)
 	stateDB := statedb.New(ctx, k, txConfig)
+	defer stateDB.Abort()
 	res, err := k.ApplyMessageWithConfig(ctx, stateDB, *msg, tracer.Hooks, commitMessage, false, cfg, txConfig, false, nil)
 	if err != nil {
 		return nil, 0, status.Error(codes.Internal, err.Error())

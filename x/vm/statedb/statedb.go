@@ -32,8 +32,10 @@ import (
 // it consists of an auto-increment id and a journal index.
 // it's safer to use than using journal index alone.
 type revision struct {
-	id           int
-	journalIndex int
+	id             int
+	journalIndex   int
+	pairedSnapshot uint64
+	pairedBound    bool
 }
 
 var _ vm.StateDB = &StateDB{}
@@ -85,6 +87,10 @@ type StateDB struct {
 	// from index 0. Event counter tracks events to avoid having them reprocessed.
 	// On revert, this counter is rewound to the snapshot's event count.
 	processedEventsCount int
+	paired               PairedCache
+	pairedInitial        uint64
+	pairedMultiSnapshots map[int]uint64
+	revertingRevision    bool
 }
 
 func (s *StateDB) CreateContract(address common.Address) {
@@ -187,11 +193,29 @@ func (s *StateDB) GetCacheContext() (sdk.Context, error) {
 // MultiStoreSnapshot snapshots stateDB CacheMultiStore
 // and returns snapshot index
 func (s *StateDB) MultiStoreSnapshot() int {
-	return s.snapshotter.Snapshot()
+	snapshot := s.snapshotter.Snapshot()
+	if s.paired != nil {
+		s.pairedMultiSnapshots[snapshot] = s.paired.Snapshot()
+	}
+	return snapshot
 }
 
 func (s *StateDB) RevertMultiStore(snapshot int) {
 	s.snapshotter.RevertToSnapshot(snapshot)
+	if s.paired != nil {
+		if !s.revertingRevision {
+			point, ok := s.pairedMultiSnapshots[snapshot]
+			if !ok {
+				panic(pairedCachePanic{Cause: "missing paired multistore savepoint"})
+			}
+			completeCache(func() { s.paired.Revert(point) })
+		}
+		for id := range s.pairedMultiSnapshots {
+			if id >= snapshot {
+				delete(s.pairedMultiSnapshots, id)
+			}
+		}
+	}
 }
 
 // cache creates the stateDB cache context
@@ -210,6 +234,19 @@ func (s *StateDB) cache() error {
 	snapshotStore := snapshotmulti.NewStore(cms, storeKeys, tStoreKeys)
 	s.snapshotter = snapshotStore
 	s.cacheCtx = s.cacheCtx.WithMultiStore(snapshotStore)
+	if factory := pairedFactory(s.ctx); factory != nil {
+		bound, scope, err := factory(s.ctx, s.cacheCtx)
+		if err != nil {
+			AbortCache(scope)
+			return err
+		}
+		if scope == nil {
+			panic(pairedCachePanic{Cause: "paired cache factory returned no scope"})
+		}
+		s.cacheCtx, s.paired = bound, scope
+		s.pairedInitial = scope.Snapshot()
+		s.pairedMultiSnapshots = make(map[int]uint64)
+	}
 	s.writeCache = func() {
 		eventsToEmit := s.cacheCtx.EventManager().Events()
 		s.ctx.EventManager().EmitEvents(eventsToEmit)
@@ -689,7 +726,11 @@ func (s *StateDB) SlotInAccessList(addr common.Address, slot common.Hash) (addre
 func (s *StateDB) Snapshot() int {
 	id := s.nextRevisionID
 	s.nextRevisionID++
-	s.validRevisions = append(s.validRevisions, revision{id, s.journal.length()})
+	rev := revision{id: id, journalIndex: s.journal.length()}
+	if s.paired != nil {
+		rev.pairedSnapshot, rev.pairedBound = s.paired.Snapshot(), true
+	}
+	s.validRevisions = append(s.validRevisions, rev)
 	return id
 }
 
@@ -706,13 +747,42 @@ func (s *StateDB) RevertToSnapshot(revid int) {
 
 	// Replay the journal to undo changes and remove invalidated snapshots
 	// Event restoration is handled by precompileCallChange.Revert()
-	s.journal.Revert(s, snapshot)
+	s.revertingRevision = true
+	func() {
+		defer func() { s.revertingRevision = false }()
+		s.journal.Revert(s, snapshot)
+	}()
+	if s.paired != nil {
+		point := s.pairedInitial
+		if s.validRevisions[idx].pairedBound {
+			point = s.validRevisions[idx].pairedSnapshot
+		}
+		completeCache(func() { s.paired.Revert(point) })
+	}
 	s.validRevisions = s.validRevisions[:idx]
 }
 
 // Commit writes the dirty states to keeper
 // the StateDB object should be discarded after committed.
 func (s *StateDB) Commit() error {
+	if pairedFactory(s.ctx) != nil {
+		if s.writeCache == nil {
+			if err := s.cache(); err != nil {
+				return err
+			}
+		}
+		if err := s.paired.PrepareAdopt(); err != nil {
+			return err
+		}
+		// Finish fallible keeper writes inside the child, before either cache is
+		// adopted. A keeper error cannot leave SDK writes in the parent.
+		if err := s.commitWithCtx(s.cacheCtx); err != nil {
+			return err
+		}
+		s.writeCache()
+		completeCache(s.paired.Adopt)
+		return nil
+	}
 	// writeCache func will exist only when there's a call to a precompile.
 	// It applies all the store updates preformed by precompile calls.
 	if s.writeCache != nil {

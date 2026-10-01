@@ -211,10 +211,15 @@ func (k *Keeper) ApplyTransaction(ctx sdk.Context, tx *ethtypes.Transaction) (*t
 	// create a cache context to revert state. The cache context is only committed when both tx and hooks executed successfully.
 	// Didn't use `Snapshot` because the context stack has exponential complexity on certain operations,
 	// thus restricted to be used only inside `ApplyMessage`.
-	tmpCtx, commitFn := ctx.CacheContext()
+	tmpCtx, commitFn, paired, err := statedb.CacheContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { statedb.AbortCache(paired) }()
 
 	// pass true to commit the StateDB
 	stateDB := statedb.New(tmpCtx, k, txConfig)
+	defer stateDB.Abort()
 	res, err := k.ApplyMessageWithConfig(tmpCtx, stateDB, *msg, nil, true, false, cfg, txConfig, false, nil)
 	if err != nil {
 		// when a transaction contains multiple msg, as long as one of the msg fails
@@ -250,7 +255,11 @@ func (k *Keeper) ApplyTransaction(ctx sdk.Context, tx *ethtypes.Transaction) (*t
 
 		// If the tx failed we discard the old context and create a new one, so
 		// PostTxProcessing can persist data even if the tx fails.
-		tmpCtx, commitFn = ctx.CacheContext()
+		statedb.AbortCache(paired)
+		tmpCtx, commitFn, paired, err = statedb.CacheContext(ctx)
+		if err != nil {
+			return nil, err
+		}
 	} else {
 		receipt.Status = ethtypes.ReceiptStatusSuccessful
 	}
