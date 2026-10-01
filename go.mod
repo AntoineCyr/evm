@@ -292,3 +292,5 @@ retract (
 	v0.3.1
 	v0.3.0
 )
+
+replace github.com/cosmos/cosmos-sdk => github.com/mizufinance/cosmos-sdk v0.0.0-20261001221255-934b73b0c396

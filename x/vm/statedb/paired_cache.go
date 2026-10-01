@@ -17,7 +17,10 @@ type PairedCacheFactory func(parent, child sdk.Context) (sdk.Context, PairedCach
 type pairedCacheKey struct{}
 
 func WithPairedCacheFactory(ctx sdk.Context, factory PairedCacheFactory) sdk.Context {
-	return ctx.WithValue(pairedCacheKey{}, factory)
+	ctx = ctx.WithValue(pairedCacheKey{}, factory)
+	return sdk.WithCacheScopeFactory(ctx, func(parent, child sdk.Context) (sdk.Context, sdk.CacheScope, error) {
+		return factory(parent, child)
+	})
 }
 
 func pairedFactory(ctx sdk.Context) PairedCacheFactory {
