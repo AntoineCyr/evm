@@ -779,7 +779,7 @@ func (s *StateDB) Commit() error {
 		if err := s.commitWithCtx(s.cacheCtx); err != nil {
 			return err
 		}
-		s.writeCache()
+		completeCache(s.writeCache)
 		completeCache(s.paired.Adopt)
 		return nil
 	}

@@ -239,6 +239,11 @@ func (k Keeper) EthCall(c context.Context, req *types.EthCallRequest) (*types.Ms
 	}
 
 	ctx := sdk.UnwrapSDKContext(c)
+	ctx, simulation, scopeErr := k.simulationCache(ctx)
+	if scopeErr != nil {
+		return nil, status.Error(codes.FailedPrecondition, scopeErr.Error())
+	}
+	defer statedb.AbortCache(simulation)
 
 	var args types.TransactionArgs
 	err := json.Unmarshal(req.Args, &args)
@@ -289,6 +294,11 @@ func (k Keeper) EstimateGasInternal(c context.Context, req *types.EthCallRequest
 	}
 
 	ctx := sdk.UnwrapSDKContext(c)
+	ctx, simulation, scopeErr := k.simulationCache(ctx)
+	if scopeErr != nil {
+		return nil, status.Error(codes.FailedPrecondition, scopeErr.Error())
+	}
+	defer statedb.AbortCache(simulation)
 
 	if req.GasCap < ethparams.TxGas {
 		return nil, status.Errorf(codes.InvalidArgument, "gas cap cannot be lower than %d", ethparams.TxGas)
@@ -385,7 +395,12 @@ func (k Keeper) EstimateGasInternal(c context.Context, req *types.EthCallRequest
 
 		tmpCtx := ctx
 		if fromType == types.RPC {
-			tmpCtx, _ = ctx.CacheContext()
+			var attempt statedb.PairedCache
+			tmpCtx, _, attempt, err = statedb.CacheContext(ctx)
+			if err != nil {
+				return true, nil, err
+			}
+			defer statedb.AbortCache(attempt)
 
 			acct := k.GetAccount(tmpCtx, msg.From)
 
@@ -520,6 +535,11 @@ func (k Keeper) TraceTx(c context.Context, req *types.QueryTraceTxRequest) (*typ
 	ctx = ctx.WithBlockHeight(requestedHeight)
 	ctx = ctx.WithBlockTime(req.BlockTime)
 	ctx = ctx.WithHeaderHash(common.Hex2Bytes(req.BlockHash))
+	ctx, simulation, scopeErr := k.simulationCache(ctx)
+	if scopeErr != nil {
+		return nil, status.Error(codes.FailedPrecondition, scopeErr.Error())
+	}
+	defer statedb.AbortCache(simulation)
 
 	// to get the base fee we only need the block max gas in the consensus params
 	ctx = ctx.WithConsensusParams(tmproto.ConsensusParams{
@@ -559,9 +579,11 @@ func (k Keeper) TraceTx(c context.Context, req *types.QueryTraceTxRequest) (*typ
 		ctx = buildTraceCtx(ctx, msg.GasLimit)
 		// we ignore the error here. this endpoint, ideally, is called internally from the ETH backend, which will call this query
 		// using all previous txs in the trace transaction's block. some of those _could_ be invalid transactions.
-		stateDB := statedb.New(ctx, &k, txConfig)
-		defer stateDB.Abort()
-		rsp, _ := k.ApplyMessageWithConfig(ctx, stateDB, *msg, nil, true, false, cfg, txConfig, false, nil)
+		rsp, _ := func() (*types.MsgEthereumTxResponse, error) {
+			stateDB := statedb.New(ctx, &k, txConfig)
+			defer stateDB.Abort()
+			return k.ApplyMessageWithConfig(ctx, stateDB, *msg, nil, true, false, cfg, txConfig, false, nil)
+		}()
 		if rsp != nil {
 			ctx.GasMeter().ConsumeGas(rsp.GasUsed, "evm predecessor tx")
 			txConfig.LogIndex += uint(len(rsp.Logs))
@@ -614,6 +636,11 @@ func (k Keeper) TraceBlock(c context.Context, req *types.QueryTraceBlockRequest)
 	ctx = ctx.WithBlockHeight(contextHeight)
 	ctx = ctx.WithBlockTime(req.BlockTime)
 	ctx = ctx.WithHeaderHash(common.Hex2Bytes(req.BlockHash))
+	ctx, simulation, scopeErr := k.simulationCache(ctx)
+	if scopeErr != nil {
+		return nil, status.Error(codes.FailedPrecondition, scopeErr.Error())
+	}
+	defer statedb.AbortCache(simulation)
 
 	// to get the base fee we only need the block max gas in the consensus params
 	ctx = ctx.WithConsensusParams(tmproto.ConsensusParams{
@@ -691,6 +718,11 @@ func (k Keeper) TraceCall(c context.Context, req *types.QueryTraceCallRequest) (
 	ctx = ctx.WithBlockHeight(requestedHeight)
 	ctx = ctx.WithBlockTime(req.BlockTime)
 	ctx = ctx.WithHeaderHash(common.Hex2Bytes(req.BlockHash))
+	ctx, simulation, scopeErr := k.simulationCache(ctx)
+	if scopeErr != nil {
+		return nil, status.Error(codes.FailedPrecondition, scopeErr.Error())
+	}
+	defer statedb.AbortCache(simulation)
 
 	cfg, err := k.EVMConfig(ctx, GetProposerAddress(ctx, req.ProposerAddress))
 	if err != nil {

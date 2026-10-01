@@ -38,6 +38,7 @@ func (k Keeper) ConvertERC20(
 
 	// Create stateDB for this transaction
 	stateDB := statedb.New(ctx, k.evmKeeper, statedb.NewEmptyTxConfig())
+	defer stateDB.Abort()
 
 	return k.ConvertERC20IntoCoinsForNativeToken(ctx, stateDB, contract, msg.Amount, receiver, sender, true, false)
 }
@@ -110,6 +111,7 @@ func (k Keeper) ConvertCoinNativeERC20(ctx sdk.Context, pair types.TokenPair, am
 
 	// Unescrow Tokens and send to receiver
 	stateDB := statedb.New(ctx, k.evmKeeper, statedb.NewEmptyTxConfig())
+	defer stateDB.Abort()
 	res, err := k.evmKeeper.CallEVM(ctx, stateDB, erc20, types.ModuleAddress, contract, true, callFromPrecompile, nil, "transfer", receiver, amount.BigInt())
 	if err != nil {
 		return err

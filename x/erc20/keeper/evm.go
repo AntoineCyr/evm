@@ -46,6 +46,7 @@ func (k Keeper) QueryERC20(
 
 	// Decimals - standard uint8, no fallback needed
 	stateDB := statedb.New(ctx, k.evmKeeper, statedb.NewEmptyTxConfig())
+	defer stateDB.Abort()
 	// Okay to assume we're not calling from a precompile, as queries will just revert state changes.
 	res, err := k.evmKeeper.CallEVM(ctx, stateDB, erc20, types.ModuleAddress, contract, false, false, nil, "decimals")
 	if err != nil {
@@ -71,6 +72,7 @@ func (k Keeper) queryERC20String(
 ) (string, error) {
 	// 1) Call into the EVM
 	stateDB := statedb.New(ctx, k.evmKeeper, statedb.NewEmptyTxConfig())
+	defer stateDB.Abort()
 	// Okay to assume we're not calling from a precompile, as queries will just revert state changes.
 	res, err := k.evmKeeper.CallEVM(ctx, stateDB, erc20, types.ModuleAddress, contract, false, false, nil, method)
 	if err != nil {
@@ -106,6 +108,7 @@ func (k Keeper) BalanceOf(
 	contract, account common.Address,
 ) *big.Int {
 	stateDB := statedb.New(ctx, k.evmKeeper, statedb.NewEmptyTxConfig())
+	defer stateDB.Abort()
 	// Okay to assume we're not calling from a precompile, as queries will just revert state changes.
 	res, err := k.evmKeeper.CallEVM(ctx, stateDB, abi, types.ModuleAddress, contract, false, false, nil, "balanceOf", account)
 	if err != nil {

@@ -89,7 +89,8 @@ type Keeper struct {
 
 	// defaultEvmCoinInfo is the default EVM coin info used when evmCoinInfo is not initialized in the state,
 	// mainly for historical queries.
-	defaultEvmCoinInfo types.EvmCoinInfo
+	defaultEvmCoinInfo     types.EvmCoinInfo
+	simulationCacheFactory statedb.PairedCacheFactory
 }
 
 // NewKeeper generates new evm module keeper

@@ -127,10 +127,15 @@ func (k ContractKeeper) IBCReceivePacketCallback(
 	// Skipping this causes the EVM gas estimation function to deplete all Cosmos gas.
 	// We re-add the actual EVM call gas used to the original context after the call is complete
 	// with the gas retrieved from the EVM message result.
-	cachedCtx, writeFn := ctx.CacheContext()
+	cachedCtx, writeFn, paired, err := statedb.CacheContext(ctx)
+	if err != nil {
+		return err
+	}
+	defer statedb.AbortCache(paired)
 	cachedCtx = evmante.BuildEvmExecutionCtx(cachedCtx).
 		WithGasMeter(evmtypes.NewInfiniteGasMeterWithLimit(cbData.CommitGasLimit))
 	stateDB := statedb.New(cachedCtx, k.evmKeeper, statedb.NewEmptyTxConfig())
+	defer stateDB.Abort()
 
 	// receiver := sdk.MustAccAddressFromBech32(data.Receiver)
 	receiver, err := sdk.AccAddressFromBech32(data.Receiver)
@@ -296,10 +301,15 @@ func (k ContractKeeper) IBCOnAcknowledgementPacketCallback(
 	// Skipping this causes the EVM gas estimation function to deplete all Cosmos gas.
 	// We re-add the actual EVM call gas used to the original context after the call is complete
 	// with the gas retrieved from the EVM message result.
-	cachedCtx, writeFn := ctx.CacheContext()
+	cachedCtx, writeFn, paired, err := statedb.CacheContext(ctx)
+	if err != nil {
+		return err
+	}
+	defer statedb.AbortCache(paired)
 	cachedCtx = evmante.BuildEvmExecutionCtx(cachedCtx).
 		WithGasMeter(evmtypes.NewInfiniteGasMeterWithLimit(cbData.CommitGasLimit))
 	stateDB := statedb.New(cachedCtx, k.evmKeeper, statedb.NewEmptyTxConfig())
+	defer stateDB.Abort()
 
 	if len(cbData.Calldata) != 0 {
 		return errorsmod.Wrap(types.ErrInvalidCalldata, "acknowledgement callback data should not contain calldata")
@@ -397,10 +407,15 @@ func (k ContractKeeper) IBCOnTimeoutPacketCallback(
 	// Skipping this causes the EVM gas estimation function to deplete all Cosmos gas.
 	// We re-add the actual EVM call gas used to the original context after the call is complete
 	// with the gas retrieved from the EVM message result.
-	cachedCtx, writeFn := ctx.CacheContext()
+	cachedCtx, writeFn, paired, err := statedb.CacheContext(ctx)
+	if err != nil {
+		return err
+	}
+	defer statedb.AbortCache(paired)
 	cachedCtx = evmante.BuildEvmExecutionCtx(cachedCtx).
 		WithGasMeter(evmtypes.NewInfiniteGasMeterWithLimit(cbData.CommitGasLimit))
 	stateDB := statedb.New(cachedCtx, k.evmKeeper, statedb.NewEmptyTxConfig())
+	defer stateDB.Abort()
 
 	if len(cbData.Calldata) != 0 {
 		return errorsmod.Wrap(types.ErrInvalidCalldata, "timeout callback data should not contain calldata")

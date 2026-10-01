@@ -47,7 +47,7 @@ func CacheContext(ctx sdk.Context) (sdk.Context, func(), PairedCache, error) {
 		if err := scope.PrepareAdopt(); err != nil {
 			panic(pairedCachePanic{Cause: err})
 		}
-		write()
+		completeCache(write)
 		completeCache(scope.Adopt)
 	}, scope, nil
 }
