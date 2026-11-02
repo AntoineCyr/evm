@@ -63,3 +63,30 @@ func (s *StateDB) TraceExecutionFrames(tracer *tracing.Hooks) *tracing.Hooks {
 	}
 	return hooks
 }
+
+// ExecutionPanicRecovery captures the frames owned by this ApplyMessage call.
+// Ordinary panics retain their type after cleanup; nested calls leave their
+// caller's frames intact. Uncertain adoption failures must not be retried.
+func (s *StateDB) ExecutionPanicRecovery() func() {
+	depth := len(s.executionFrames)
+	return func() {
+		cause := recover()
+		if cause == nil {
+			return
+		}
+		if _, fatal := cause.(interface{ FatalExecution() }); fatal {
+			panic(cause)
+		}
+		func() {
+			defer func() {
+				if failure := recover(); failure != nil {
+					panic(types.ExecutionScopePanic{Cause: failure})
+				}
+			}()
+			for len(s.executionFrames) > depth {
+				s.EndExecutionFrame(true)
+			}
+		}()
+		panic(cause)
+	}
+}

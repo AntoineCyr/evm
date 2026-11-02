@@ -410,15 +410,6 @@ func (k *Keeper) ApplyMessage(ctx sdk.Context, stateDB *statedb.StateDB, msg cor
 //
 // If commit is true, the `StateDB` will be committed or flushed (if called from within a precompile), otherwise discarded.
 func (k *Keeper) ApplyMessageWithConfig(ctx sdk.Context, stateDB *statedb.StateDB, msg core.Message, tracer *tracing.Hooks, commit bool, callFromPrecompile bool, cfg *statedb.EVMConfig, txConfig statedb.TxConfig, internal bool, overrides *rpctypes.StateOverride) (*types.MsgEthereumTxResponse, error) {
-	defer func() {
-		if cause := recover(); cause != nil {
-			if types.HasExecutionScopeHook(ctx) {
-				panic(types.ExecutionScopePanic{Cause: cause})
-			}
-			panic(cause)
-		}
-	}()
-
 	var (
 		ret   []byte // return bytes from evm execution
 		vmErr error  // vm errors do not effect consensus and are therefore not assigned to err
@@ -426,6 +417,7 @@ func (k *Keeper) ApplyMessageWithConfig(ctx sdk.Context, stateDB *statedb.StateD
 	if stateDB == nil {
 		return nil, types.ErrNilStateDB
 	}
+	defer stateDB.ExecutionPanicRecovery()()
 	ethCfg := types.GetEthChainConfig()
 	evm := k.NewEVMWithOverridePrecompiles(ctx, msg, cfg, tracer, stateDB, overrides == nil)
 	// Gas limit suffices for the floor data cost (EIP-7623)

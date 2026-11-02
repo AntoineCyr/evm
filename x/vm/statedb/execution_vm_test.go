@@ -2,7 +2,9 @@ package statedb_test
 
 import (
 	"context"
+	storetypes "cosmossdk.io/store/types"
 	"math/big"
+	"reflect"
 	"testing"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -83,5 +85,39 @@ func TestEVMExecutionScopesCaughtAndAncestorReverts(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+type panickingPrecompile struct{ cause any }
+
+func (p panickingPrecompile) RequiredGas([]byte) uint64                       { return 0 }
+func (p panickingPrecompile) Address() common.Address                         { return common.HexToAddress("0x100") }
+func (p panickingPrecompile) Run(*vm.EVM, *vm.Contract, bool) ([]byte, error) { panic(p.cause) }
+
+func TestEVMPanicDiscardsEffectsAndPreservesOutOfGas(t *testing.T) {
+	for _, cause := range []any{"precompile failure", storetypes.ErrorOutOfGas{Descriptor: "free gas limit"}} {
+		root := &effects{}
+		ctx := sdk.Context{}.WithContext(context.Background()).WithEventManager(sdk.NewEventManager()).WithValue(effectKey{}, root)
+		ctx = types.WithExecutionScopeHook(ctx, func(parent sdk.Context) (sdk.Context, types.ExecutionScope, error) {
+			scope := &effects{parent: parent.Value(effectKey{}).(*effects), value: 1}
+			return parent.WithValue(effectKey{}, scope), scope, nil
+		})
+		db := statedb.New(ctx, NewMockKeeper(), statedb.NewEmptyTxConfig())
+		address := common.HexToAddress("0x100")
+		evm := vm.NewEVM(vm.BlockContext{CanTransfer: core.CanTransfer, Transfer: core.Transfer, GetHash: func(uint64) common.Hash { return common.Hash{} }, BlockNumber: big.NewInt(1), GasLimit: 1000000, Time: 1, Difficulty: big.NewInt(0), BaseFee: big.NewInt(0)}, db, params.AllEthashProtocolChanges, vm.Config{Tracer: db.TraceExecutionFrames(nil)})
+		evm.WithPrecompiles(vm.PrecompiledContracts{address: panickingPrecompile{cause}})
+		got := func() (caught any) {
+			defer func() { caught = recover() }()
+			func() {
+				defer db.ExecutionPanicRecovery()()
+				// Model the enclosing host cache: successful child closes are provisional.
+				db.BeginExecutionFrame()
+				_, _, _ = evm.Call(common.HexToAddress("0x200"), address, nil, 500000, uint256.NewInt(0))
+			}()
+			return nil
+		}()
+		if !reflect.DeepEqual(got, cause) || root.value != 0 {
+			t.Fatalf("panic=%v, committed effects=%d", got, root.value)
+		}
 	}
 }
